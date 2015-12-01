@@ -1,23 +1,32 @@
+// +build linux
+
 package aufs
 
 import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"github.com/docker/docker/archive"
-	"github.com/docker/docker/daemon/graphdriver"
 	"io/ioutil"
 	"os"
 	"path"
 	"testing"
+
+	"github.com/docker/docker/daemon/graphdriver"
+	"github.com/docker/docker/pkg/archive"
+	"github.com/docker/docker/pkg/reexec"
 )
 
 var (
-	tmp = path.Join(os.TempDir(), "aufs-tests", "aufs")
+	tmpOuter = path.Join(os.TempDir(), "aufs-tests")
+	tmp      = path.Join(tmpOuter, "aufs")
 )
 
+func init() {
+	reexec.Init()
+}
+
 func testInit(dir string, t *testing.T) graphdriver.Driver {
-	d, err := Init(dir, nil)
+	d, err := Init(dir, nil, nil, nil)
 	if err != nil {
 		if err == graphdriver.ErrNotSupported {
 			t.Skip(err)
@@ -90,7 +99,7 @@ func TestCreateNewDir(t *testing.T) {
 	d := newDriver(t)
 	defer os.RemoveAll(tmp)
 
-	if err := d.Create("1", ""); err != nil {
+	if err := d.Create("1", "", ""); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -99,7 +108,7 @@ func TestCreateNewDirStructure(t *testing.T) {
 	d := newDriver(t)
 	defer os.RemoveAll(tmp)
 
-	if err := d.Create("1", ""); err != nil {
+	if err := d.Create("1", "", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -120,7 +129,7 @@ func TestRemoveImage(t *testing.T) {
 	d := newDriver(t)
 	defer os.RemoveAll(tmp)
 
-	if err := d.Create("1", ""); err != nil {
+	if err := d.Create("1", "", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -145,7 +154,7 @@ func TestGetWithoutParent(t *testing.T) {
 	d := newDriver(t)
 	defer os.RemoveAll(tmp)
 
-	if err := d.Create("1", ""); err != nil {
+	if err := d.Create("1", "", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -172,7 +181,7 @@ func TestCleanupWithDir(t *testing.T) {
 	d := newDriver(t)
 	defer os.RemoveAll(tmp)
 
-	if err := d.Create("1", ""); err != nil {
+	if err := d.Create("1", "", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -185,11 +194,11 @@ func TestMountedFalseResponse(t *testing.T) {
 	d := newDriver(t)
 	defer os.RemoveAll(tmp)
 
-	if err := d.Create("1", ""); err != nil {
+	if err := d.Create("1", "", ""); err != nil {
 		t.Fatal(err)
 	}
 
-	response, err := d.mounted("1")
+	response, err := d.mounted(d.active["1"])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,10 +213,10 @@ func TestMountedTrueReponse(t *testing.T) {
 	defer os.RemoveAll(tmp)
 	defer d.Cleanup()
 
-	if err := d.Create("1", ""); err != nil {
+	if err := d.Create("1", "", ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.Create("2", "1"); err != nil {
+	if err := d.Create("2", "1", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -216,7 +225,7 @@ func TestMountedTrueReponse(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	response, err := d.mounted("2")
+	response, err := d.mounted(d.active["2"])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,10 +239,10 @@ func TestMountWithParent(t *testing.T) {
 	d := newDriver(t)
 	defer os.RemoveAll(tmp)
 
-	if err := d.Create("1", ""); err != nil {
+	if err := d.Create("1", "", ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.Create("2", "1"); err != nil {
+	if err := d.Create("2", "1", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -261,10 +270,10 @@ func TestRemoveMountedDir(t *testing.T) {
 	d := newDriver(t)
 	defer os.RemoveAll(tmp)
 
-	if err := d.Create("1", ""); err != nil {
+	if err := d.Create("1", "", ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.Create("2", "1"); err != nil {
+	if err := d.Create("2", "1", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -282,7 +291,7 @@ func TestRemoveMountedDir(t *testing.T) {
 		t.Fatal("mntPath should not be empty string")
 	}
 
-	mounted, err := d.mounted("2")
+	mounted, err := d.mounted(d.active["2"])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -300,7 +309,7 @@ func TestCreateWithInvalidParent(t *testing.T) {
 	d := newDriver(t)
 	defer os.RemoveAll(tmp)
 
-	if err := d.Create("1", "docker"); err == nil {
+	if err := d.Create("1", "docker", ""); err == nil {
 		t.Fatalf("Error should not be nil with parent does not exist")
 	}
 }
@@ -309,7 +318,7 @@ func TestGetDiff(t *testing.T) {
 	d := newDriver(t)
 	defer os.RemoveAll(tmp)
 
-	if err := d.Create("1", ""); err != nil {
+	if err := d.Create("1", "", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -343,10 +352,10 @@ func TestChanges(t *testing.T) {
 	d := newDriver(t)
 	defer os.RemoveAll(tmp)
 
-	if err := d.Create("1", ""); err != nil {
+	if err := d.Create("1", "", ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.Create("2", "1"); err != nil {
+	if err := d.Create("2", "1", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -392,7 +401,7 @@ func TestChanges(t *testing.T) {
 		t.Fatalf("Change kind should be ChangeAdd got %s", change.Kind)
 	}
 
-	if err := d.Create("3", "2"); err != nil {
+	if err := d.Create("3", "2", ""); err != nil {
 		t.Fatal(err)
 	}
 	mntPoint, err = d.Get("3", "")
@@ -437,7 +446,7 @@ func TestDiffSize(t *testing.T) {
 	d := newDriver(t)
 	defer os.RemoveAll(tmp)
 
-	if err := d.Create("1", ""); err != nil {
+	if err := d.Create("1", "", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -479,7 +488,7 @@ func TestChildDiffSize(t *testing.T) {
 	defer os.RemoveAll(tmp)
 	defer d.Cleanup()
 
-	if err := d.Create("1", ""); err != nil {
+	if err := d.Create("1", "", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -515,7 +524,7 @@ func TestChildDiffSize(t *testing.T) {
 		t.Fatalf("Expected size to be %d got %d", size, diffSize)
 	}
 
-	if err := d.Create("2", "1"); err != nil {
+	if err := d.Create("2", "1", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -534,7 +543,7 @@ func TestExists(t *testing.T) {
 	defer os.RemoveAll(tmp)
 	defer d.Cleanup()
 
-	if err := d.Create("1", ""); err != nil {
+	if err := d.Create("1", "", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -552,7 +561,7 @@ func TestStatus(t *testing.T) {
 	defer os.RemoveAll(tmp)
 	defer d.Cleanup()
 
-	if err := d.Create("1", ""); err != nil {
+	if err := d.Create("1", "", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -561,7 +570,7 @@ func TestStatus(t *testing.T) {
 		t.Fatal("Status should not be nil or empty")
 	}
 	rootDir := status[0]
-	dirs := status[1]
+	dirs := status[2]
 	if rootDir[0] != "Root Dir" {
 		t.Fatalf("Expected Root Dir got %s", rootDir[0])
 	}
@@ -581,7 +590,7 @@ func TestApplyDiff(t *testing.T) {
 	defer os.RemoveAll(tmp)
 	defer d.Cleanup()
 
-	if err := d.Create("1", ""); err != nil {
+	if err := d.Create("1", "", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -607,10 +616,10 @@ func TestApplyDiff(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := d.Create("2", ""); err != nil {
+	if err := d.Create("2", "", ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.Create("3", "2"); err != nil {
+	if err := d.Create("3", "2", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -629,15 +638,101 @@ func TestApplyDiff(t *testing.T) {
 	}
 }
 
+func TestHardlinks(t *testing.T) {
+	// Copy 2 layers that have linked files to new layers and check if hardlink are preserved
+	d := newDriver(t)
+	defer os.RemoveAll(tmp)
+	defer d.Cleanup()
+
+	origFile := "test_file"
+	linkedFile := "linked_file"
+
+	if err := d.Create("source-1", "", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	mountPath, err := d.Get("source-1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	f, err := os.Create(path.Join(mountPath, origFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+
+	layerTar1, err := d.Diff("source-1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := d.Create("source-2", "source-1", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	mountPath, err = d.Get("source-2", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Link(path.Join(mountPath, origFile), path.Join(mountPath, linkedFile)); err != nil {
+		t.Fatal(err)
+	}
+
+	layerTar2, err := d.Diff("source-2", "source-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := d.Create("target-1", "", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := d.ApplyDiff("target-1", "", layerTar1); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := d.Create("target-2", "target-1", ""); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := d.ApplyDiff("target-2", "target-1", layerTar2); err != nil {
+		t.Fatal(err)
+	}
+
+	mountPath, err = d.Get("target-2", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fi1, err := os.Lstat(path.Join(mountPath, origFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fi2, err := os.Lstat(path.Join(mountPath, linkedFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !os.SameFile(fi1, fi2) {
+		t.Fatal("Target files are not linked")
+	}
+}
+
 func hash(c string) string {
 	h := sha256.New()
 	fmt.Fprint(h, c)
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-func TestMountMoreThan42Layers(t *testing.T) {
-	d := newDriver(t)
-	defer os.RemoveAll(tmp)
+func testMountMoreThan42Layers(t *testing.T, mountPath string) {
+	if err := os.MkdirAll(mountPath, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	defer os.RemoveAll(mountPath)
+	d := testInit(mountPath, t).(*Driver)
 	defer d.Cleanup()
 	var last string
 	var expected int
@@ -656,26 +751,26 @@ func TestMountMoreThan42Layers(t *testing.T) {
 		}
 		current = hash(current)
 
-		if err := d.Create(current, parent); err != nil {
+		if err := d.Create(current, parent, ""); err != nil {
 			t.Logf("Current layer %d", i)
-			t.Fatal(err)
+			t.Error(err)
 		}
 		point, err := d.Get(current, "")
 		if err != nil {
 			t.Logf("Current layer %d", i)
-			t.Fatal(err)
+			t.Error(err)
 		}
 		f, err := os.Create(path.Join(point, current))
 		if err != nil {
 			t.Logf("Current layer %d", i)
-			t.Fatal(err)
+			t.Error(err)
 		}
 		f.Close()
 
 		if i%10 == 0 {
 			if err := os.Remove(path.Join(point, parent)); err != nil {
 				t.Logf("Current layer %d", i)
-				t.Fatal(err)
+				t.Error(err)
 			}
 			expected--
 		}
@@ -685,13 +780,37 @@ func TestMountMoreThan42Layers(t *testing.T) {
 	// Perform the actual mount for the top most image
 	point, err := d.Get(last, "")
 	if err != nil {
-		t.Fatal(err)
+		t.Error(err)
 	}
 	files, err := ioutil.ReadDir(point)
 	if err != nil {
-		t.Fatal(err)
+		t.Error(err)
 	}
 	if len(files) != expected {
-		t.Fatalf("Expected %d got %d", expected, len(files))
+		t.Errorf("Expected %d got %d", expected, len(files))
+	}
+}
+
+func TestMountMoreThan42Layers(t *testing.T) {
+	os.RemoveAll(tmpOuter)
+	testMountMoreThan42Layers(t, tmp)
+}
+
+func TestMountMoreThan42LayersMatchingPathLength(t *testing.T) {
+	defer os.RemoveAll(tmpOuter)
+	zeroes := "0"
+	for {
+		// This finds a mount path so that when combined into aufs mount options
+		// 4096 byte boundary would be in between the paths or in permission
+		// section. For '/tmp' it will use '/tmp/aufs-tests/00000000/aufs'
+		mountPath := path.Join(tmpOuter, zeroes, "aufs")
+		pathLength := 77 + len(mountPath)
+
+		if mod := 4095 % pathLength; mod == 0 || mod > pathLength-2 {
+			t.Logf("Using path: %s", mountPath)
+			testMountMoreThan42Layers(t, mountPath)
+			return
+		}
+		zeroes += "0"
 	}
 }

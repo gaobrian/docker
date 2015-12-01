@@ -1,57 +1,30 @@
 package main
 
 import (
-	"bufio"
-	"bytes"
-	"encoding/json"
-	"fmt"
-	"testing"
+	"net/http"
 	"time"
+
+	"github.com/docker/docker/pkg/integration/checker"
+	"github.com/go-check/check"
 )
 
-func TestEventsApiGetLineDelim(t *testing.T) {
-	name := "testimageevents"
-	defer deleteImages(name)
-	_, err := buildImage(name,
-		`FROM scratch
-        MAINTAINER "docker"`,
-		true)
-	if err != nil {
-		t.Fatal(err)
+func (s *DockerSuite) TestEventsApiEmptyOutput(c *check.C) {
+	type apiResp struct {
+		resp *http.Response
+		err  error
 	}
-	if err := deleteImages(name); err != nil {
-		t.Fatal(err)
+	chResp := make(chan *apiResp)
+	go func() {
+		resp, body, err := sockRequestRaw("GET", "/events", nil, "")
+		body.Close()
+		chResp <- &apiResp{resp, err}
+	}()
+
+	select {
+	case r := <-chResp:
+		c.Assert(r.err, checker.IsNil)
+		c.Assert(r.resp.StatusCode, checker.Equals, http.StatusOK)
+	case <-time.After(3 * time.Second):
+		c.Fatal("timeout waiting for events api to respond, should have responded immediately")
 	}
-
-	endpoint := fmt.Sprintf("/events?since=1&until=%d", time.Now().Unix())
-	body, err := sockRequest("GET", endpoint)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	linesRead := 0
-	scanner := bufio.NewScanner(bytes.NewReader(body))
-	for scanner.Scan() && linesRead < 2 {
-		line := scanner.Bytes()
-		if len(line) == 0 {
-			continue
-		}
-
-		// make sure line delimited json
-		res := make(map[string]interface{})
-		if err := json.Unmarshal(line, &res); err != nil {
-			t.Fatalf("Unmarshaling the line as JSON failed: %v", err)
-		}
-
-		linesRead++
-	}
-	if err := scanner.Err(); err != nil {
-		t.Fatalf("Scanner failed: %v", err)
-	}
-
-	if linesRead < 2 {
-		t.Fatalf("Only %d lines were read from the stream", linesRead)
-	}
-
-	logDone("events - test the api response is line delimited json")
 }

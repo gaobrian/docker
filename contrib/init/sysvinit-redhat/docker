@@ -23,6 +23,7 @@
 . /etc/rc.d/init.d/functions
 
 prog="docker"
+unshare=/usr/bin/unshare
 exec="/usr/bin/$prog"
 pidfile="/var/run/$prog.pid"
 lockfile="/var/lock/subsys/$prog"
@@ -40,13 +41,22 @@ prestart() {
 }
 
 start() {
-    [ -x $exec ] || exit 5
+    if [ ! -x $exec ]; then
+      if [ ! -e $exec ]; then
+        echo "Docker executable $exec not found"
+      else
+        echo "You do not have permission to execute the Docker executable $exec"
+      fi	      
+      exit 5
+    fi
+
+    check_for_cleanup
 
     if ! [ -f $pidfile ]; then
         prestart
         printf "Starting $prog:\t"
         echo "\n$(date)\n" >> $logfile
-        $exec -d $other_args &>> $logfile &
+        "$unshare" -m -- $exec daemon $other_args &>> $logfile &
         pid=$!
         touch $lockfile
         # wait up to 10 seconds for the pidfile to exist.  see
@@ -55,7 +65,13 @@ start() {
         while [ ! -f $pidfile -a $tries -lt 10 ]; do
             sleep 1
             tries=$((tries + 1))
+            echo -n '.'
         done
+        if [ ! -f $pidfile ]; then
+          failure
+          echo
+          exit 1
+        fi
         success
         echo
     else
@@ -68,7 +84,7 @@ start() {
 
 stop() {
     echo -n $"Stopping $prog: "
-    killproc -p $pidfile $prog
+    killproc -p $pidfile -d 300 $prog
     retval=$?
     echo
     [ $retval -eq 0 ] && rm -f $lockfile
@@ -94,6 +110,13 @@ rh_status() {
 
 rh_status_q() {
     rh_status >/dev/null 2>&1
+}
+
+
+check_for_cleanup() {
+    if [ -f ${pidfile} ]; then
+        /bin/ps -fp $(cat ${pidfile}) > /dev/null || rm ${pidfile}
+    fi
 }
 
 case "$1" in

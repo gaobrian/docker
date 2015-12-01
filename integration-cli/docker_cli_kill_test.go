@@ -2,63 +2,96 @@ package main
 
 import (
 	"fmt"
-	"os/exec"
+	"net/http"
 	"strings"
-	"testing"
+
+	"github.com/docker/docker/pkg/integration/checker"
+	"github.com/go-check/check"
 )
 
-func TestKillContainer(t *testing.T) {
-	runCmd := exec.Command(dockerBinary, "run", "-d", "busybox", "sh", "-c", "sleep 10")
-	out, _, err := runCommandWithOutput(runCmd)
-	errorOut(err, t, fmt.Sprintf("run failed with errors: %v", err))
+func (s *DockerSuite) TestKillContainer(c *check.C) {
+	testRequires(c, DaemonIsLinux)
+	out, _ := dockerCmd(c, "run", "-d", "busybox", "top")
+	cleanedContainerID := strings.TrimSpace(out)
+	c.Assert(waitRun(cleanedContainerID), check.IsNil)
 
-	cleanedContainerID := stripTrailingCharacters(out)
+	dockerCmd(c, "kill", cleanedContainerID)
 
-	inspectCmd := exec.Command(dockerBinary, "inspect", cleanedContainerID)
-	inspectOut, _, err := runCommandWithOutput(inspectCmd)
-	errorOut(err, t, fmt.Sprintf("out should've been a container id: %v %v", inspectOut, err))
+	out, _ = dockerCmd(c, "ps", "-q")
+	c.Assert(out, checker.Not(checker.Contains), cleanedContainerID, check.Commentf("killed container is still running"))
 
-	killCmd := exec.Command(dockerBinary, "kill", cleanedContainerID)
-	out, _, err = runCommandWithOutput(killCmd)
-	errorOut(err, t, fmt.Sprintf("failed to kill container: %v %v", out, err))
-
-	listRunningContainersCmd := exec.Command(dockerBinary, "ps", "-q")
-	out, _, err = runCommandWithOutput(listRunningContainersCmd)
-	errorOut(err, t, fmt.Sprintf("failed to list running containers: %v", err))
-
-	if strings.Contains(out, cleanedContainerID) {
-		t.Fatal("killed container is still running")
-	}
-
-	deleteContainer(cleanedContainerID)
-
-	logDone("kill - kill container running sleep 10")
 }
 
-func TestKillDifferentUserContainer(t *testing.T) {
-	runCmd := exec.Command(dockerBinary, "run", "-u", "daemon", "-d", "busybox", "sh", "-c", "sleep 10")
-	out, _, err := runCommandWithOutput(runCmd)
-	errorOut(err, t, fmt.Sprintf("run failed with errors: %v", err))
+func (s *DockerSuite) TestKillofStoppedContainer(c *check.C) {
+	testRequires(c, DaemonIsLinux)
+	out, _ := dockerCmd(c, "run", "-d", "busybox", "top")
+	cleanedContainerID := strings.TrimSpace(out)
 
-	cleanedContainerID := stripTrailingCharacters(out)
+	dockerCmd(c, "stop", cleanedContainerID)
 
-	inspectCmd := exec.Command(dockerBinary, "inspect", cleanedContainerID)
-	inspectOut, _, err := runCommandWithOutput(inspectCmd)
-	errorOut(err, t, fmt.Sprintf("out should've been a container id: %v %v", inspectOut, err))
+	_, _, err := dockerCmdWithError("kill", "-s", "30", cleanedContainerID)
+	c.Assert(err, check.Not(check.IsNil), check.Commentf("Container %s is not running", cleanedContainerID))
+}
 
-	killCmd := exec.Command(dockerBinary, "kill", cleanedContainerID)
-	out, _, err = runCommandWithOutput(killCmd)
-	errorOut(err, t, fmt.Sprintf("failed to kill container: %v %v", out, err))
+func (s *DockerSuite) TestKillDifferentUserContainer(c *check.C) {
+	testRequires(c, DaemonIsLinux)
+	out, _ := dockerCmd(c, "run", "-u", "daemon", "-d", "busybox", "top")
+	cleanedContainerID := strings.TrimSpace(out)
+	c.Assert(waitRun(cleanedContainerID), check.IsNil)
 
-	listRunningContainersCmd := exec.Command(dockerBinary, "ps", "-q")
-	out, _, err = runCommandWithOutput(listRunningContainersCmd)
-	errorOut(err, t, fmt.Sprintf("failed to list running containers: %v", err))
+	dockerCmd(c, "kill", cleanedContainerID)
 
-	if strings.Contains(out, cleanedContainerID) {
-		t.Fatal("killed container is still running")
-	}
+	out, _ = dockerCmd(c, "ps", "-q")
+	c.Assert(out, checker.Not(checker.Contains), cleanedContainerID, check.Commentf("killed container is still running"))
 
-	deleteContainer(cleanedContainerID)
+}
 
-	logDone("kill - kill container running sleep 10 from a different user")
+// regression test about correct signal parsing see #13665
+func (s *DockerSuite) TestKillWithSignal(c *check.C) {
+	testRequires(c, DaemonIsLinux)
+	out, _ := dockerCmd(c, "run", "-d", "busybox", "top")
+	cid := strings.TrimSpace(out)
+	c.Assert(waitRun(cid), check.IsNil)
+
+	dockerCmd(c, "kill", "-s", "SIGWINCH", cid)
+
+	running, _ := inspectField(cid, "State.Running")
+
+	c.Assert(running, checker.Equals, "true", check.Commentf("Container should be in running state after SIGWINCH"))
+}
+
+func (s *DockerSuite) TestKillWithInvalidSignal(c *check.C) {
+	testRequires(c, DaemonIsLinux)
+	out, _ := dockerCmd(c, "run", "-d", "busybox", "top")
+	cid := strings.TrimSpace(out)
+	c.Assert(waitRun(cid), check.IsNil)
+
+	out, _, err := dockerCmdWithError("kill", "-s", "0", cid)
+	c.Assert(err, check.NotNil)
+	c.Assert(out, checker.Contains, "Invalid signal: 0", check.Commentf("Kill with an invalid signal didn't error out correctly"))
+
+	running, _ := inspectField(cid, "State.Running")
+	c.Assert(running, checker.Equals, "true", check.Commentf("Container should be in running state after an invalid signal"))
+
+	out, _ = dockerCmd(c, "run", "-d", "busybox", "top")
+	cid = strings.TrimSpace(out)
+	c.Assert(waitRun(cid), check.IsNil)
+
+	out, _, err = dockerCmdWithError("kill", "-s", "SIG42", cid)
+	c.Assert(err, check.NotNil)
+	c.Assert(out, checker.Contains, "Invalid signal: SIG42", check.Commentf("Kill with an invalid signal error out correctly"))
+
+	running, _ = inspectField(cid, "State.Running")
+	c.Assert(running, checker.Equals, "true", check.Commentf("Container should be in running state after an invalid signal"))
+
+}
+
+func (s *DockerSuite) TestKillStoppedContainerAPIPre120(c *check.C) {
+	testRequires(c, DaemonIsLinux)
+	dockerCmd(c, "run", "--name", "docker-kill-test-api", "-d", "busybox", "top")
+	dockerCmd(c, "stop", "docker-kill-test-api")
+
+	status, _, err := sockRequest("POST", fmt.Sprintf("/v1.19/containers/%s/kill", "docker-kill-test-api"), nil)
+	c.Assert(err, check.IsNil)
+	c.Assert(status, check.Equals, http.StatusNoContent)
 }

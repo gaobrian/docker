@@ -1,39 +1,13 @@
 package utils
 
 import (
+	"fmt"
+	"io/ioutil"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
-func TestCheckLocalDns(t *testing.T) {
-	for resolv, result := range map[string]bool{`# Dynamic
-nameserver 10.0.2.3
-search docker.com`: false,
-		`# Dynamic
-#nameserver 127.0.0.1
-nameserver 10.0.2.3
-search docker.com`: false,
-		`# Dynamic
-nameserver 10.0.2.3 #not used 127.0.1.1
-search docker.com`: false,
-		`# Dynamic
-#nameserver 10.0.2.3
-#search docker.com`: true,
-		`# Dynamic
-nameserver 127.0.0.1
-search docker.com`: true,
-		`# Dynamic
-nameserver 127.0.1.1
-search docker.com`: true,
-		`# Dynamic
-`: true,
-		``: true,
-	} {
-		if CheckLocalDns([]byte(resolv)) != result {
-			t.Fatalf("Wrong local dns detection: {%s} should be %v", resolv, result)
-		}
-	}
-}
 func TestReplaceAndAppendEnvVars(t *testing.T) {
 	var (
 		d = []string{"HOME=/"}
@@ -52,77 +26,48 @@ func TestReplaceAndAppendEnvVars(t *testing.T) {
 	}
 }
 
-// Reading a symlink to a directory must return the directory
-func TestReadSymlinkedDirectoryExistingDirectory(t *testing.T) {
-	var err error
-	if err = os.Mkdir("/tmp/testReadSymlinkToExistingDirectory", 0777); err != nil {
-		t.Errorf("failed to create directory: %s", err)
+func TestReadDockerIgnore(t *testing.T) {
+	tmpDir, err := ioutil.TempDir("", "dockerignore-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	di, err := ReadDockerIgnore(nil)
+	if err != nil {
+		t.Fatalf("Expected not to have error, got %v", err)
 	}
 
-	if err = os.Symlink("/tmp/testReadSymlinkToExistingDirectory", "/tmp/dirLinkTest"); err != nil {
-		t.Errorf("failed to create symlink: %s", err)
+	if diLen := len(di); diLen != 0 {
+		t.Fatalf("Expected to have zero dockerignore entry, got %d", diLen)
 	}
 
-	var path string
-	if path, err = ReadSymlinkedDirectory("/tmp/dirLinkTest"); err != nil {
-		t.Fatalf("failed to read symlink to directory: %s", err)
+	diName := filepath.Join(tmpDir, ".dockerignore")
+	content := fmt.Sprintf("test1\n/test2\n/a/file/here\n\nlastfile")
+	err = ioutil.WriteFile(diName, []byte(content), 0777)
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	if path != "/tmp/testReadSymlinkToExistingDirectory" {
-		t.Fatalf("symlink returned unexpected directory: %s", path)
+	diFd, err := os.Open(diName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	di, err = ReadDockerIgnore(diFd)
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	if err = os.Remove("/tmp/testReadSymlinkToExistingDirectory"); err != nil {
-		t.Errorf("failed to remove temporary directory: %s", err)
+	if di[0] != "test1" {
+		t.Fatalf("First element is not test1")
 	}
-
-	if err = os.Remove("/tmp/dirLinkTest"); err != nil {
-		t.Errorf("failed to remove symlink: %s", err)
+	if di[1] != "/test2" {
+		t.Fatalf("Second element is not /test2")
 	}
-}
-
-// Reading a non-existing symlink must fail
-func TestReadSymlinkedDirectoryNonExistingSymlink(t *testing.T) {
-	var path string
-	var err error
-	if path, err = ReadSymlinkedDirectory("/tmp/test/foo/Non/ExistingPath"); err == nil {
-		t.Fatalf("error expected for non-existing symlink")
+	if di[2] != "/a/file/here" {
+		t.Fatalf("Third element is not /a/file/here")
 	}
-
-	if path != "" {
-		t.Fatalf("expected empty path, but '%s' was returned", path)
-	}
-}
-
-// Reading a symlink to a file must fail
-func TestReadSymlinkedDirectoryToFile(t *testing.T) {
-	var err error
-	var file *os.File
-
-	if file, err = os.Create("/tmp/testReadSymlinkToFile"); err != nil {
-		t.Fatalf("failed to create file: %s", err)
-	}
-
-	file.Close()
-
-	if err = os.Symlink("/tmp/testReadSymlinkToFile", "/tmp/fileLinkTest"); err != nil {
-		t.Errorf("failed to create symlink: %s", err)
-	}
-
-	var path string
-	if path, err = ReadSymlinkedDirectory("/tmp/fileLinkTest"); err == nil {
-		t.Fatalf("ReadSymlinkedDirectory on a symlink to a file should've failed")
-	}
-
-	if path != "" {
-		t.Fatalf("path should've been empty: %s", path)
-	}
-
-	if err = os.Remove("/tmp/testReadSymlinkToFile"); err != nil {
-		t.Errorf("failed to remove file: %s", err)
-	}
-
-	if err = os.Remove("/tmp/fileLinkTest"); err != nil {
-		t.Errorf("failed to remove symlink: %s", err)
+	if di[3] != "lastfile" {
+		t.Fatalf("Fourth element is not lastfile")
 	}
 }

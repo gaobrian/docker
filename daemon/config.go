@@ -1,11 +1,9 @@
 package daemon
 
 import (
-	"net"
-
-	"github.com/docker/docker/daemon/networkdriver"
 	"github.com/docker/docker/opts"
 	flag "github.com/docker/docker/pkg/mflag"
+	"github.com/docker/docker/runconfig"
 )
 
 const (
@@ -13,62 +11,64 @@ const (
 	disableNetworkBridge = "none"
 )
 
-// Config define the configuration of a docker daemon
-// These are the configuration settings that you pass
-// to the docker daemon when you launch it with say: `docker -d -e lxc`
-// FIXME: separate runtime configuration from http api configuration
-type Config struct {
-	Pidfile                     string
-	Root                        string
-	AutoRestart                 bool
-	Dns                         []string
-	DnsSearch                   []string
-	Mirrors                     []string
-	EnableIptables              bool
-	EnableIpForward             bool
-	EnableIpMasq                bool
-	DefaultIp                   net.IP
-	BridgeIface                 string
-	BridgeIP                    string
-	InterContainerCommunication bool
-	GraphDriver                 string
-	GraphOptions                []string
-	ExecDriver                  string
-	Mtu                         int
-	DisableNetwork              bool
-	EnableSelinuxSupport        bool
-	Context                     map[string][]string
+// CommonConfig defines the configuration of a docker daemon which are
+// common across platforms.
+type CommonConfig struct {
+	AutoRestart   bool
+	Bridge        bridgeConfig // Bridge holds bridge network specific configuration.
+	Context       map[string][]string
+	DisableBridge bool
+	DNS           []string
+	DNSOptions    []string
+	DNSSearch     []string
+	ExecOptions   []string
+	ExecRoot      string
+	GraphDriver   string
+	GraphOptions  []string
+	Labels        []string
+	LogConfig     runconfig.LogConfig
+	Mtu           int
+	Pidfile       string
+	RemappedRoot  string
+	Root          string
+	TrustKeyPath  string
+
+	// ClusterStore is the storage backend used for the cluster information. It is used by both
+	// multihost networking (to store networks and endpoints information) and by the node discovery
+	// mechanism.
+	ClusterStore string
+
+	// ClusterOpts is used to pass options to the discovery package for tuning libkv settings, such
+	// as TLS configuration settings.
+	ClusterOpts map[string]string
+
+	// ClusterAdvertise is the network endpoint that the Engine advertises for the purpose of node
+	// discovery. This should be a 'host:port' combination on which that daemon instance is
+	// reachable by other hosts.
+	ClusterAdvertise string
 }
 
-// InstallFlags adds command-line options to the top-level flag parser for
+// InstallCommonFlags adds command-line options to the top-level flag parser for
 // the current process.
 // Subsequent calls to `flag.Parse` will populate config with values parsed
 // from the command-line.
-func (config *Config) InstallFlags() {
-	flag.StringVar(&config.Pidfile, []string{"p", "-pidfile"}, "/var/run/docker.pid", "Path to use for daemon PID file")
-	flag.StringVar(&config.Root, []string{"g", "-graph"}, "/var/lib/docker", "Path to use as the root of the Docker runtime")
-	flag.BoolVar(&config.AutoRestart, []string{"#r", "#-restart"}, true, "--restart on the daemon has been deprecated in favor of --restart policies on docker run")
-	flag.BoolVar(&config.EnableIptables, []string{"#iptables", "-iptables"}, true, "Enable Docker's addition of iptables rules")
-	flag.BoolVar(&config.EnableIpForward, []string{"#ip-forward", "-ip-forward"}, true, "Enable net.ipv4.ip_forward")
-	flag.BoolVar(&config.EnableIpMasq, []string{"-ip-masq"}, true, "Enable IP masquerading for bridge's IP range")
-	flag.StringVar(&config.BridgeIP, []string{"#bip", "-bip"}, "", "Use this CIDR notation address for the network bridge's IP, not compatible with -b")
-	flag.StringVar(&config.BridgeIface, []string{"b", "-bridge"}, "", "Attach containers to a pre-existing network bridge\nuse 'none' to disable container networking")
-	flag.BoolVar(&config.InterContainerCommunication, []string{"#icc", "-icc"}, true, "Enable inter-container communication")
-	flag.StringVar(&config.GraphDriver, []string{"s", "-storage-driver"}, "", "Force the Docker runtime to use a specific storage driver")
-	flag.StringVar(&config.ExecDriver, []string{"e", "-exec-driver"}, "native", "Force the Docker runtime to use a specific exec driver")
-	flag.BoolVar(&config.EnableSelinuxSupport, []string{"-selinux-enabled"}, false, "Enable selinux support. SELinux does not presently support the BTRFS storage driver")
-	flag.IntVar(&config.Mtu, []string{"#mtu", "-mtu"}, 0, "Set the containers network MTU\nif no value is provided: default to the default route MTU or 1500 if no default route is available")
-	opts.IPVar(&config.DefaultIp, []string{"#ip", "-ip"}, "0.0.0.0", "Default IP address to use when binding container ports")
-	opts.ListVar(&config.GraphOptions, []string{"-storage-opt"}, "Set storage driver options")
+func (config *Config) InstallCommonFlags(cmd *flag.FlagSet, usageFn func(string) string) {
+	cmd.Var(opts.NewListOptsRef(&config.GraphOptions, nil), []string{"-storage-opt"}, usageFn("Set storage driver options"))
+	cmd.Var(opts.NewListOptsRef(&config.ExecOptions, nil), []string{"-exec-opt"}, usageFn("Set exec driver options"))
+	cmd.StringVar(&config.Pidfile, []string{"p", "-pidfile"}, defaultPidFile, usageFn("Path to use for daemon PID file"))
+	cmd.StringVar(&config.Root, []string{"g", "-graph"}, defaultGraph, usageFn("Root of the Docker runtime"))
+	cmd.StringVar(&config.ExecRoot, []string{"-exec-root"}, "/var/run/docker", usageFn("Root of the Docker execdriver"))
+	cmd.BoolVar(&config.AutoRestart, []string{"#r", "#-restart"}, true, usageFn("--restart on the daemon has been deprecated in favor of --restart policies on docker run"))
+	cmd.StringVar(&config.GraphDriver, []string{"s", "-storage-driver"}, "", usageFn("Storage driver to use"))
+	cmd.IntVar(&config.Mtu, []string{"#mtu", "-mtu"}, 0, usageFn("Set the containers network MTU"))
 	// FIXME: why the inconsistency between "hosts" and "sockets"?
-	opts.IPListVar(&config.Dns, []string{"#dns", "-dns"}, "Force Docker to use specific DNS servers")
-	opts.DnsSearchListVar(&config.DnsSearch, []string{"-dns-search"}, "Force Docker to use specific DNS search domains")
-	opts.MirrorListVar(&config.Mirrors, []string{"-registry-mirror"}, "Specify a preferred Docker registry mirror")
-}
-
-func GetDefaultNetworkMtu() int {
-	if iface, err := networkdriver.GetDefaultRouteIface(); err == nil {
-		return iface.MTU
-	}
-	return defaultNetworkMtu
+	cmd.Var(opts.NewListOptsRef(&config.DNS, opts.ValidateIPAddress), []string{"#dns", "-dns"}, usageFn("DNS server to use"))
+	cmd.Var(opts.NewListOptsRef(&config.DNSOptions, nil), []string{"-dns-opt"}, usageFn("DNS options to use"))
+	cmd.Var(opts.NewListOptsRef(&config.DNSSearch, opts.ValidateDNSSearch), []string{"-dns-search"}, usageFn("DNS search domains to use"))
+	cmd.Var(opts.NewListOptsRef(&config.Labels, opts.ValidateLabel), []string{"-label"}, usageFn("Set key=value labels to the daemon"))
+	cmd.StringVar(&config.LogConfig.Type, []string{"-log-driver"}, "json-file", usageFn("Default driver for container logs"))
+	cmd.Var(opts.NewMapOpts(config.LogConfig.Config, nil), []string{"-log-opt"}, usageFn("Set log driver options"))
+	cmd.StringVar(&config.ClusterAdvertise, []string{"-cluster-advertise"}, "", usageFn("Address or interface name to advertise"))
+	cmd.StringVar(&config.ClusterStore, []string{"-cluster-store"}, "", usageFn("Set the cluster store"))
+	cmd.Var(opts.NewMapOpts(config.ClusterOpts, nil), []string{"-cluster-store-opt"}, usageFn("Set cluster store options"))
 }
