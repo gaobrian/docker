@@ -1,4 +1,4 @@
-FROM ubuntu:14.04
+FROM ubuntu:trusty-20190515
 MAINTAINER Erik Hollensbe <erik@hollensbe.org>
 
 RUN apt-get update && apt-get install nginx-full -y
