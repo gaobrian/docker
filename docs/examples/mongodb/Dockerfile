@@ -2,7 +2,7 @@
 # Based on ubuntu:latest, installs MongoDB following the instructions from:
 # http://docs.mongodb.org/manual/tutorial/install-mongodb-on-ubuntu/
 
-FROM       ubuntu:latest
+FROM       ubuntu:groovy-20210416
 MAINTAINER Docker
 
 # Installation:
