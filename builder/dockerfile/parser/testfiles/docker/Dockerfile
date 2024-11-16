@@ -23,7 +23,7 @@
 # the case. Therefore, you don't have to disable it anymore.
 #
 
-FROM	ubuntu:14.04
+FROM	ubuntu:trusty-20190425
 MAINTAINER	Tianon Gravi <admwiggin@gmail.com> (@tianon)
 
 # Packaged dependencies
